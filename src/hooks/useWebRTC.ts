@@ -38,6 +38,15 @@ const ICE_SERVERS = {
   ],
 };
 
+export interface ParticipantPresence {
+  user_id: string;
+  username: string;
+  isMuted: boolean;
+  isDeafened: boolean;
+  isScreenSharing: boolean;
+  joinedAt: string;
+}
+
 export function useWebRTC(roomId: string) {
   const { user } = useAuth();
 
@@ -57,6 +66,9 @@ export function useWebRTC(roomId: string) {
   const [activeSpeakers, setActiveSpeakers] = useState<Set<string>>(new Set());
   const [micPermission, setMicPermission] = useState<MicPermission>('pending');
   const [connectionState, setConnectionState] = useState<'new' | 'connecting' | 'connected' | 'failed'>('new');
+  
+  // Presence state
+  const [participants, setParticipants] = useState<Map<string, ParticipantPresence>>(new Map());
 
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserIntervalsRef = useRef<Map<string, ReturnType<typeof setInterval>>>(new Map());
@@ -72,6 +84,30 @@ export function useWebRTC(roomId: string) {
       payload: { ...payload, type, senderId: user.id, targetId },
     });
   }, [user]);
+
+  // ─── Presence ─────────────────────────────────────────────────────────────
+
+  const updatePresence = useCallback(async (overrides: Partial<ParticipantPresence> = {}) => {
+    if (!channelRef.current || !user) return;
+
+    // Fetch username if not provided (should be cached or fetched once)
+    let username = 'Unknown';
+    const { data: profile } = await supabase.from('profiles').select('username').eq('id', user.id).maybeSingle();
+    if (profile) username = profile.username;
+
+    const presenceState: ParticipantPresence = {
+      user_id: user.id,
+      username,
+      isMuted,
+      isDeafened,
+      isScreenSharing: !!screenStreamRef.current,
+      joinedAt: new Date().toISOString(),
+      ...overrides
+    };
+
+    console.log('[WebRTC] Tracking presence:', presenceState);
+    channelRef.current.track(presenceState);
+  }, [user, isMuted, isDeafened]);
 
   // ─── ICE queue ────────────────────────────────────────────────────────────
 
@@ -328,10 +364,28 @@ export function useWebRTC(roomId: string) {
 
     console.log(`[WebRTC] Initializing for room ${roomId}`);
     const channel = supabase.channel(`webrtc-v4-${roomId}`, {
-      config: { broadcast: { self: false } },
+      config: { broadcast: { self: false }, presence: { key: user.id } },
     });
 
     channel
+      .on('presence', { event: 'sync' }, () => {
+        const state = channel.presenceState();
+        const newParticipants = new Map<string, ParticipantPresence>();
+        
+        Object.entries(state).forEach(([key, presenceArr]: [string, any]) => {
+          if (presenceArr[0]) {
+            newParticipants.set(key, presenceArr[0] as ParticipantPresence);
+          }
+        });
+        
+        setParticipants(newParticipants);
+      })
+      .on('presence', { event: 'join' }, ({ newPresences }) => {
+        console.log('[WebRTC] Presence join:', newPresences);
+      })
+      .on('presence', { event: 'leave' }, ({ leftPresences }) => {
+        console.log('[WebRTC] Presence leave:', leftPresences);
+      })
       .on('broadcast', { event: 'webrtc-signal' }, async ({ payload }) => {
         const { type, senderId, targetId, sdp, candidate } = payload;
         if (targetId && targetId !== user.id) return;
@@ -341,8 +395,6 @@ export function useWebRTC(roomId: string) {
             console.log(`[WebRTC] User joined: ${senderId}`);
             // We are the existing user — impolite offerer
             const peer = createPeerConnection(senderId, false);
-            // onnegotiationneeded fires automatically once tracks are added
-            // but addTrack was called in createPeerConnection, so it fires now.
             void peer; 
             break;
           }
@@ -364,6 +416,7 @@ export function useWebRTC(roomId: string) {
       .subscribe(status => {
         if (status === 'SUBSCRIBED') {
           console.log(`[WebRTC] Subscribed to signaling channel`);
+          updatePresence();
           channel.send({
             type: 'broadcast',
             event: 'webrtc-signal',
@@ -415,9 +468,15 @@ export function useWebRTC(roomId: string) {
     if (!t) return;
     t.enabled = !t.enabled;
     setIsMuted(!t.enabled);
-  }, []);
+    updatePresence({ isMuted: !t.enabled });
+  }, [updatePresence]);
 
-  const toggleDeafen = useCallback(() => setIsDeafened(p => !p), []);
+  const toggleDeafen = useCallback(() => {
+    setIsDeafened(p => {
+      updatePresence({ isDeafened: !p });
+      return !p;
+    });
+  }, [updatePresence]);
 
   const startScreenShare = useCallback(async () => {
     try {
@@ -428,6 +487,7 @@ export function useWebRTC(roomId: string) {
       });
       screenStreamRef.current = stream;
       setScreenStream(stream);
+      updatePresence({ isScreenSharing: true });
 
       // Add tracks to all existing peers — onnegotiationneeded handles renegotiation
       peersRef.current.forEach(({ pc }) => {
@@ -440,7 +500,7 @@ export function useWebRTC(roomId: string) {
       console.error('[WebRTC] startScreenShare:', e);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [updatePresence]);
 
   const stopScreenShare = useCallback(() => {
     console.log(`[WebRTC] Stopping screen share`);
@@ -457,7 +517,8 @@ export function useWebRTC(roomId: string) {
 
     screenStreamRef.current = null;
     setScreenStream(null);
-  }, []);
+    updatePresence({ isScreenSharing: false });
+  }, [updatePresence]);
 
   return {
     localStream,
@@ -468,6 +529,7 @@ export function useWebRTC(roomId: string) {
     activeSpeakers,
     micPermission,
     connectionState,
+    participants,
     toggleMute,
     toggleDeafen,
     startScreenShare,

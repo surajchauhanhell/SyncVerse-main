@@ -77,8 +77,8 @@ export default function WatchRoomPage() {
     isMuted,
     isDeafened,
     activeSpeakers,
-    micPermission,
     connectionState,
+    participants: presenceParticipants,
     toggleMute,
     toggleDeafen,
     startScreenShare,
@@ -103,7 +103,6 @@ export default function WatchRoomPage() {
     }
     fetchRoom();
     fetchMessages();
-    fetchParticipants();
 
     const msgChannel = supabase
       .channel(`room-${roomId}-messages`)
@@ -114,18 +113,6 @@ export default function WatchRoomPage() {
         filter: `room_id=eq.${roomId}`,
       }, (payload) => {
         setMessages((prev) => [...prev, payload.new as Message]);
-      })
-      .subscribe();
-
-    const partChannel = supabase
-      .channel(`room-${roomId}-participants`)
-      .on('postgres_changes', {
-        event: '*',
-        schema: 'public',
-        table: 'room_members',
-        filter: `room_id=eq.${roomId}`,
-      }, () => {
-        fetchParticipants();
       })
       .subscribe();
 
@@ -141,21 +128,8 @@ export default function WatchRoomPage() {
       })
       .subscribe();
 
-    // Prevent StrictMode race conditions with database inserts
-    let isMounted = true;
-    
-    // Mark user as joined in DB if not already
-    supabase.from('room_members').select('id').eq('room_id', roomId).eq('user_id', user.id).maybeSingle().then(({ data }) => {
-      if (!data && isMounted) {
-        supabase.from('room_members').insert({ room_id: roomId, user_id: user.id }).then();
-      }
-    });
-
     return () => {
-      isMounted = false;
-      supabase.from('room_members').delete().eq('room_id', roomId).eq('user_id', user.id).then();
       supabase.removeChannel(msgChannel);
-      supabase.removeChannel(partChannel);
       supabase.removeChannel(roomChannel);
     };
   }, [roomId, user, navigate]);
@@ -183,14 +157,6 @@ export default function WatchRoomPage() {
       .order('created_at', { ascending: true })
       .limit(100);
     if (data) setMessages(data as any);
-  };
-
-  const fetchParticipants = async () => {
-    const { data } = await supabase
-      .from('room_members')
-      .select('*, profiles:user_id(username)')
-      .eq('room_id', roomId);
-    if (data) setParticipants(data as any);
   };
 
   const sendMessage = async () => {
@@ -245,6 +211,13 @@ export default function WatchRoomPage() {
       }
     }
   }
+
+  const sortedParticipants = Array.from(presenceParticipants.values()).sort((a, b) => {
+    // Host first
+    if (a.user_id === room?.host_id) return -1;
+    if (b.user_id === room?.host_id) return 1;
+    return a.username.localeCompare(b.username);
+  });
 
   return (
     <div 
@@ -492,7 +465,7 @@ export default function WatchRoomPage() {
                 >
                   <span className="flex items-center justify-center gap-1.5">
                     <Users className="w-4 h-4" />
-                    Participants ({participants.length})
+                    Participants ({presenceParticipants.size})
                   </span>
                 </button>
               </div>
@@ -546,32 +519,39 @@ export default function WatchRoomPage() {
                   <div className="mb-4">
                     <h3 className="text-xs font-semibold text-white/30 uppercase tracking-wider mb-3 flex items-center gap-2">
                       <span className="w-1.5 h-1.5 rounded-full bg-neon-green animate-pulse" />
-                      Voice Channel — {participants.length} connected
+                      VOICE CHANNEL — {presenceParticipants.size} CONNECTED
                     </h3>
-                    {participants.map((p) => {
+                    {sortedParticipants.map((p) => {
                       const isSpeaking = activeSpeakers.has(p.user_id);
                       const isMe = p.user_id === user?.id;
                       return (
-                        <div key={p.id} className="flex items-center gap-3 p-2.5 rounded-xl hover:bg-white/5 transition-colors">
+                        <div key={p.user_id} className="flex items-center gap-3 p-2.5 rounded-xl hover:bg-white/5 transition-colors">
                           <div className={`relative w-9 h-9 rounded-xl bg-gradient-to-br from-neon-indigo/30 to-neon-cyan/30 flex items-center justify-center text-xs font-semibold flex-shrink-0 transition-all ${
                             isSpeaking ? 'ring-2 ring-neon-green shadow-[0_0_12px_rgba(34,197,94,0.5)]' : ''
                           }`}>
-                            {(p.profiles as any)?.username?.charAt(0)?.toUpperCase() || '?'}
+                            {p.username.charAt(0).toUpperCase()}
                             {isSpeaking && (
                               <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 bg-neon-green rounded-full border border-black" />
                             )}
                           </div>
                           <div className="flex-1 min-w-0">
                             <div className="text-sm font-medium truncate">
-                              {(p.profiles as any)?.username || 'Unknown'}
+                              {p.username}
                               {p.user_id === room?.host_id && <span className="text-white/40 text-xs ml-1">(Host)</span>}
                               {isMe && <span className="text-white/40 text-xs ml-1">(You)</span>}
                             </div>
                             <div className="text-xs text-white/30 flex items-center gap-1 mt-0.5">
-                              {isMe ? (
-                                isMuted ? <><MicOff className="w-3 h-3 text-red-400" /> <span className="text-red-400">Muted</span></> : <><Mic className="w-3 h-3 text-neon-green" /> <span className="text-neon-green">Speaking</span></>
+                              {p.isMuted ? (
+                                <><MicOff className="w-3 h-3 text-red-400" /> <span className="text-red-400">Muted</span></>
+                              ) : isSpeaking ? (
+                                <><Mic className="w-3 h-3 text-neon-green" /> <span className="text-neon-green">Speaking</span></>
                               ) : (
-                                isSpeaking ? <><Mic className="w-3 h-3 text-neon-green" /> <span className="text-neon-green">Speaking</span></> : <><Volume2 className="w-3 h-3" /> In voice</>
+                                <><Mic className="w-3 h-3 text-white/30" /> <span>In voice</span></>
+                              )}
+                              {p.isScreenSharing && (
+                                <span className="ml-auto bg-neon-indigo/20 text-neon-indigo text-[10px] px-1.5 py-0.5 rounded flex items-center gap-1">
+                                  <ScreenShare className="w-2.5 h-2.5" /> LIVE
+                                </span>
                               )}
                             </div>
                           </div>
