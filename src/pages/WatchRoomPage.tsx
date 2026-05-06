@@ -55,6 +55,8 @@ export default function WatchRoomPage() {
 
   const chatEndRef = useRef<HTMLDivElement>(null);
   const videoContainerRef = useRef<HTMLDivElement>(null);
+  // Stable ref for screen-share video — prevents srcObject churn on re-renders
+  const screenVideoRef = useRef<HTMLVideoElement | null>(null);
 
   // Initialize Custom Hooks for Video and WebRTC
   const {
@@ -234,11 +236,14 @@ export default function WatchRoomPage() {
 
   return (
     <div className="h-screen bg-surface-0 flex flex-col relative overflow-hidden">
-      {/* Remote Audio Elements - one per peer */}
+      {/* Remote Audio Elements - stable srcObject assignment */}
       {Array.from(remoteStreams.entries()).map(([peerId, stream]) => (
         <audio
           key={peerId}
-          ref={el => { if (el) el.srcObject = stream; }}
+          ref={el => {
+            if (!el) return;
+            if (el.srcObject !== stream) el.srcObject = stream;
+          }}
           autoPlay
           muted={isDeafened}
           className="hidden"
@@ -317,13 +322,20 @@ export default function WatchRoomPage() {
             ref={videoContainerRef}
             className="flex-1 relative bg-black flex items-center justify-center group"
           >
-            {activeScreenStream ? (
+             {activeScreenStream ? (
                <div className="absolute inset-0">
                  <video
-                   ref={(el) => { if (el) el.srcObject = activeScreenStream; }}
+                   ref={el => {
+                     if (!el) return;
+                     screenVideoRef.current = el;
+                     // Only assign srcObject when stream identity changes
+                     if (el.srcObject !== activeScreenStream) {
+                       el.srcObject = activeScreenStream;
+                     }
+                   }}
                    autoPlay
                    playsInline
-                   muted // Audio is handled by the hidden <audio> tags above
+                   muted
                    className="w-full h-full object-contain"
                  />
                </div>
