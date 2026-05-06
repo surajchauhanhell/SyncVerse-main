@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
 import { supabase } from '../lib/supabase';
-import ReactPlayer from 'react-player';
 import { useAuth } from '../contexts/AuthContext';
 
 interface PlaybackState {
@@ -16,7 +15,6 @@ export function useVideoSync(roomId: string, hostId: string | null) {
   const playerRef = useRef<any>(null);
   
   const [isPlaying, setIsPlaying] = useState(false);
-  const [playbackRate, setPlaybackRate] = useState(1);
   const [playedSeconds, setPlayedSeconds] = useState(0);
   const [isSeeking, setIsSeeking] = useState(false);
   

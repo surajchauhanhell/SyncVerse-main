@@ -8,8 +8,8 @@ import { useVideoSync } from '../hooks/useVideoSync';
 import { useWebRTC } from '../hooks/useWebRTC';
 import {
   Play, Pause, Volume2, VolumeX, Maximize, Minimize,
-  Subtitles, Mic, MicOff, Video, VideoOff, MonitorUp,
-  Settings, LogOut, Copy, Check, Send, Smile,
+  Mic, MicOff,
+  Settings, LogOut, Copy, Check, Send,
   Users, Hash, ChevronRight, ChevronLeft, X, ScreenShare, ScreenShareOff
 } from 'lucide-react';
 
@@ -33,7 +33,6 @@ interface Participant {
   profiles?: { username: string } | null;
 }
 
-const EMOJIS = ['🔥', '❤️', '😂', '😮', '👏', '🎉', '💀', '👀'];
 
 export default function WatchRoomPage() {
   const { roomId } = useParams();
@@ -45,16 +44,14 @@ export default function WatchRoomPage() {
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [newMessage, setNewMessage] = useState('');
   
+  const [showSettings, setShowSettings] = useState(false);
+  const [tempUrl, setTempUrl] = useState('');
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showSubtitles, setShowSubtitles] = useState(false);
   const [showChat, setShowChat] = useState(true);
   const [showParticipants, setShowParticipants] = useState(false);
   const [copied, setCopied] = useState(false);
   const [volume, setVolume] = useState(80);
-  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
-  const [typingUser, setTypingUser] = useState<string | null>(null);
-  const [showSettings, setShowSettings] = useState(false);
-  const [tempUrl, setTempUrl] = useState('');
 
   const chatEndRef = useRef<HTMLDivElement>(null);
   const videoContainerRef = useRef<HTMLDivElement>(null);
@@ -77,6 +74,8 @@ export default function WatchRoomPage() {
     remoteStreams,
     isMuted,
     isDeafened,
+    activeSpeakers,
+    micPermission,
     toggleMute,
     toggleDeafen,
     startScreenShare,
@@ -220,35 +219,44 @@ export default function WatchRoomPage() {
     handleSeek((pct / 100) * duration);
   };
 
-  // Find active screen stream
+  // Find active screen stream (remoteStreams is Map<string, MediaStream>)
   let activeScreenStream: MediaStream | null = null;
   if (screenStream) {
     activeScreenStream = screenStream;
   } else {
-    for (const streams of remoteStreams.values()) {
-      for (const stream of streams) {
-        if (stream.getVideoTracks().length > 0) {
-          activeScreenStream = stream;
-          break;
-        }
+    for (const stream of remoteStreams.values()) {
+      if (stream.getVideoTracks().length > 0) {
+        activeScreenStream = stream;
+        break;
       }
-      if (activeScreenStream) break;
     }
   }
 
   return (
     <div className="h-screen bg-surface-0 flex flex-col relative overflow-hidden">
-      {/* Remote Audio Elements */}
-      {Array.from(remoteStreams.entries()).flatMap(([peerId, streams]) => 
-        streams.map((stream, idx) => (
-          <audio
-            key={`${peerId}-${idx}`}
-            ref={el => { if (el) el.srcObject = stream; }}
-            autoPlay
-            muted={isDeafened}
-            className="hidden"
-          />
-        ))
+      {/* Remote Audio Elements - one per peer */}
+      {Array.from(remoteStreams.entries()).map(([peerId, stream]) => (
+        <audio
+          key={peerId}
+          ref={el => { if (el) el.srcObject = stream; }}
+          autoPlay
+          muted={isDeafened}
+          className="hidden"
+        />
+      ))}
+
+      {/* Mic denied banner */}
+      {micPermission === 'denied' && (
+        <div className="fixed top-16 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 bg-red-500/20 border border-red-500/40 text-red-300 text-xs px-4 py-2 rounded-full backdrop-blur-sm">
+          <MicOff className="w-3.5 h-3.5" />
+          Microphone access denied — voice chat disabled
+        </div>
+      )}
+      {micPermission === 'unavailable' && (
+        <div className="fixed top-16 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 bg-yellow-500/20 border border-yellow-500/40 text-yellow-300 text-xs px-4 py-2 rounded-full backdrop-blur-sm">
+          <MicOff className="w-3.5 h-3.5" />
+          No microphone found
+        </div>
       )}
 
       {/* Background glow */}
@@ -321,6 +329,7 @@ export default function WatchRoomPage() {
                </div>
             ) : room?.current_video_url ? (
                <div className="absolute inset-0">
+                 {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
                  <ReactPlayer
                     ref={playerRef}
                     url={room.current_video_url}
@@ -331,8 +340,9 @@ export default function WatchRoomPage() {
                     onProgress={handleProgress as any}
                     onPlay={handlePlay}
                     onPause={handlePause}
-                    controls={false} // Custom controls overlay
-                    style={{ pointerEvents: isHost ? 'auto' : 'none' }} // Only host can directly click player
+                    controls={false}
+                    style={{ pointerEvents: isHost ? 'auto' : 'none' }}
+                    {...({} as any)}
                  />
                </div>
             ) : (
@@ -482,22 +492,40 @@ export default function WatchRoomPage() {
                 /* Participants list */
                 <div className="flex-1 overflow-y-auto p-4 space-y-2">
                   <div className="mb-4">
-                    <h3 className="text-xs font-semibold text-white/30 uppercase tracking-wider mb-3">
-                      Voice Channel
+                    <h3 className="text-xs font-semibold text-white/30 uppercase tracking-wider mb-3 flex items-center gap-2">
+                      <span className="w-1.5 h-1.5 rounded-full bg-neon-green animate-pulse" />
+                      Voice Channel — {participants.length} connected
                     </h3>
-                    {participants.map((p) => (
-                      <div key={p.id} className="flex items-center gap-3 p-2.5 rounded-xl hover:bg-white/5 transition-colors">
-                        <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-neon-indigo/30 to-neon-cyan/30 flex items-center justify-center text-xs font-semibold">
-                          {(p.profiles as any)?.username?.charAt(0) || '?'}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <div className="text-sm font-medium truncate">
-                            {(p.profiles as any)?.username || 'Unknown'}
-                            {p.user_id === room?.host_id && " (Host)"}
+                    {participants.map((p) => {
+                      const isSpeaking = activeSpeakers.has(p.user_id);
+                      const isMe = p.user_id === user?.id;
+                      return (
+                        <div key={p.id} className="flex items-center gap-3 p-2.5 rounded-xl hover:bg-white/5 transition-colors">
+                          <div className={`relative w-9 h-9 rounded-xl bg-gradient-to-br from-neon-indigo/30 to-neon-cyan/30 flex items-center justify-center text-xs font-semibold flex-shrink-0 transition-all ${
+                            isSpeaking ? 'ring-2 ring-neon-green shadow-[0_0_12px_rgba(34,197,94,0.5)]' : ''
+                          }`}>
+                            {(p.profiles as any)?.username?.charAt(0)?.toUpperCase() || '?'}
+                            {isSpeaking && (
+                              <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 bg-neon-green rounded-full border border-black" />
+                            )}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="text-sm font-medium truncate">
+                              {(p.profiles as any)?.username || 'Unknown'}
+                              {p.user_id === room?.host_id && <span className="text-white/40 text-xs ml-1">(Host)</span>}
+                              {isMe && <span className="text-white/40 text-xs ml-1">(You)</span>}
+                            </div>
+                            <div className="text-xs text-white/30 flex items-center gap-1 mt-0.5">
+                              {isMe ? (
+                                isMuted ? <><MicOff className="w-3 h-3 text-red-400" /> <span className="text-red-400">Muted</span></> : <><Mic className="w-3 h-3 text-neon-green" /> <span className="text-neon-green">Speaking</span></>
+                              ) : (
+                                isSpeaking ? <><Mic className="w-3 h-3 text-neon-green" /> <span className="text-neon-green">Speaking</span></> : <><Volume2 className="w-3 h-3" /> In voice</>
+                              )}
+                            </div>
                           </div>
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
               )}
@@ -509,34 +537,65 @@ export default function WatchRoomPage() {
       {/* Bottom Voice Controls */}
       <motion.div className="glass-strong flex-shrink-0 z-30 border-t border-white/5">
         <div className="px-4 md:px-6 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <button
-              onClick={toggleMute}
-              className={`w-11 h-11 rounded-2xl flex items-center justify-center transition-all ${
-                isMuted ? 'bg-red-500/20 text-red-400' : 'glass text-white'
-              }`}
-            >
-              {isMuted ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
-            </button>
-            <button
-              onClick={toggleDeafen}
-              className={`w-11 h-11 rounded-2xl flex items-center justify-center transition-all ${
-                isDeafened ? 'bg-red-500/20 text-red-400' : 'glass text-white'
-              }`}
-            >
-              {isDeafened ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
-            </button>
+          <div className="flex items-center gap-3">
+            {/* Mic toggle */}
+            <div className="flex flex-col items-center gap-0.5">
+              <button
+                onClick={toggleMute}
+                disabled={micPermission === 'denied' || micPermission === 'unavailable'}
+                title={isMuted ? 'Unmute' : 'Mute'}
+                className={`relative w-11 h-11 rounded-2xl flex items-center justify-center transition-all ${
+                  micPermission === 'denied' || micPermission === 'unavailable'
+                    ? 'opacity-40 cursor-not-allowed glass'
+                    : isMuted
+                    ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30'
+                    : 'glass text-white hover:bg-white/10 voice-active'
+                }`}
+              >
+                {isMuted ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
+              </button>
+              <span className="text-[10px] text-white/30">{isMuted ? 'Muted' : 'Live'}</span>
+            </div>
+
+            {/* Deafen toggle */}
+            <div className="flex flex-col items-center gap-0.5">
+              <button
+                onClick={toggleDeafen}
+                title={isDeafened ? 'Undeafen' : 'Deafen'}
+                className={`w-11 h-11 rounded-2xl flex items-center justify-center transition-all ${
+                  isDeafened ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30' : 'glass text-white hover:bg-white/10'
+                }`}
+              >
+                {isDeafened ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
+              </button>
+              <span className="text-[10px] text-white/30">{isDeafened ? 'Deaf' : 'Hear'}</span>
+            </div>
+
+            {/* Voice status pill */}
+            <div className={`hidden sm:flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full border transition-all ${
+              micPermission === 'granted' && !isMuted
+                ? 'bg-neon-green/10 border-neon-green/30 text-neon-green'
+                : micPermission === 'denied'
+                ? 'bg-red-500/10 border-red-500/30 text-red-400'
+                : 'bg-white/5 border-white/10 text-white/40'
+            }`}>
+              <span className={`w-1.5 h-1.5 rounded-full ${
+                micPermission === 'granted' && !isMuted ? 'bg-neon-green animate-pulse' : micPermission === 'denied' ? 'bg-red-400' : 'bg-white/20'
+              }`} />
+              {micPermission === 'granted' ? (isMuted ? 'Voice Ready' : 'Transmitting') : micPermission === 'denied' ? 'No Mic Access' : 'No Mic Found'}
+            </div>
           </div>
+
           <div className="flex items-center gap-2">
             <button
               onClick={() => setShowSettings(true)}
-              className="w-11 h-11 rounded-2xl glass flex items-center justify-center text-white/50 hover:text-white"
+              className="w-11 h-11 rounded-2xl glass flex items-center justify-center text-white/50 hover:text-white transition-colors"
             >
               <Settings className="w-5 h-5" />
             </button>
             <button
               onClick={() => setShowChat(!showChat)}
-              className="w-11 h-11 rounded-2xl glass flex items-center justify-center text-white"
+              className="w-11 h-11 rounded-2xl glass flex items-center justify-center text-white hover:bg-white/10 transition-colors"
             >
               {showChat ? <X className="w-5 h-5" /> : <ChevronRight className="w-5 h-5" />}
             </button>

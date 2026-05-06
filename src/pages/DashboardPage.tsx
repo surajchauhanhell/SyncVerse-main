@@ -4,9 +4,8 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
 import {
-  Play, Plus, Users, Clock, TrendingUp, LogOut, Settings,
-  Copy, Check, X, Search, ChevronRight, Hash, Globe, Lock,
-  Mic, MicOff, Video, VideoOff
+  Play, Plus, Users, Clock, TrendingUp, LogOut,
+  Copy, Check, X, Search, ChevronRight, Hash, Globe, Lock
 } from 'lucide-react';
 
 interface Room {
