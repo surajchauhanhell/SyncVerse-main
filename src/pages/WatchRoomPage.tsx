@@ -81,8 +81,19 @@ export default function WatchRoomPage() {
     toggleMute,
     toggleDeafen,
     startScreenShare,
-    stopScreenShare
+    stopScreenShare,
+    resumeAudio
   } = useWebRTC(roomId!);
+
+  useEffect(() => {
+    // Resume audio context on first click for mobile Safari/Chrome
+    window.addEventListener('click', resumeAudio, { once: true });
+    window.addEventListener('touchstart', resumeAudio, { once: true });
+    return () => {
+      window.removeEventListener('click', resumeAudio);
+      window.removeEventListener('touchstart', resumeAudio);
+    };
+  }, [resumeAudio]);
 
   useEffect(() => {
     if (!user || !roomId) {
@@ -235,7 +246,10 @@ export default function WatchRoomPage() {
   }
 
   return (
-    <div className="h-screen bg-surface-0 flex flex-col relative overflow-hidden">
+    <div 
+      className="h-screen bg-surface-0 flex flex-col relative overflow-hidden"
+      onClick={resumeAudio}
+    >
       {/* Remote Audio Elements - stable srcObject assignment */}
       {Array.from(remoteStreams.entries()).map(([peerId, stream]) => (
         <audio
@@ -243,8 +257,14 @@ export default function WatchRoomPage() {
           ref={el => {
             if (!el) return;
             if (el.srcObject !== stream) el.srcObject = stream;
+            // Attempt to force speaker output on mobile
+            if (typeof (el as any).setSinkId === 'function') {
+               // setSinkId is not well supported on mobile yet, but we ensure basic properties
+            }
           }}
           autoPlay
+          playsInline
+          webkit-playsinline="true"
           muted={isDeafened}
           className="hidden"
         />
@@ -429,11 +449,20 @@ export default function WatchRoomPage() {
         <AnimatePresence>
           {showChat && (
             <motion.aside
-              initial={{ width: 0, opacity: 0 }}
-              animate={{ width: 360, opacity: 1 }}
-              exit={{ width: 0, opacity: 0 }}
-              className="hidden md:flex flex-col border-l border-white/5 bg-surface-1/50 backdrop-blur-xl flex-shrink-0"
+              initial={{ x: '100%', opacity: 0 }}
+              animate={{ x: 0, opacity: 1 }}
+              exit={{ x: '100%', opacity: 0 }}
+              transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+              className="fixed inset-0 z-50 md:relative md:inset-auto md:w-[360px] flex flex-col border-l border-white/5 bg-surface-1/95 md:bg-surface-1/50 backdrop-blur-2xl flex-shrink-0"
             >
+              {/* Mobile Close Button */}
+              <button 
+                onClick={() => setShowChat(false)}
+                className="md:hidden absolute top-4 right-4 z-50 w-10 h-10 rounded-full glass flex items-center justify-center"
+              >
+                <X className="w-5 h-5" />
+              </button>
+
               {/* Chat tabs */}
               <div className="flex items-center border-b border-white/5 px-4">
                 <button

@@ -105,6 +105,12 @@ export function useWebRTC(roomId: string) {
     } catch { /* no audio context */ }
   }, []);
 
+  const resumeAudio = useCallback(async () => {
+    if (audioContextRef.current && audioContextRef.current.state === 'suspended') {
+      await audioContextRef.current.resume();
+    }
+  }, []);
+
   // ─── Peer removal ─────────────────────────────────────────────────────────
 
   const removePeer = useCallback((peerId: string) => {
@@ -407,5 +413,6 @@ export function useWebRTC(roomId: string) {
     toggleDeafen,
     startScreenShare,
     stopScreenShare,
+    resumeAudio,
   };
 }
