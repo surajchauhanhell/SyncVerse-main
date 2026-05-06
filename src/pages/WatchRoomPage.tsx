@@ -41,7 +41,6 @@ export default function WatchRoomPage() {
 
   const [room, setRoom] = useState<any>(null);
   const [messages, setMessages] = useState<Message[]>([]);
-  const [participants, setParticipants] = useState<Participant[]>([]);
   const [newMessage, setNewMessage] = useState('');
   
   const [showSettings, setShowSettings] = useState(false);
@@ -77,6 +76,7 @@ export default function WatchRoomPage() {
     isMuted,
     isDeafened,
     activeSpeakers,
+    micPermission,
     connectionState,
     participants: presenceParticipants,
     toggleMute,
