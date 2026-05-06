@@ -78,6 +78,7 @@ export default function WatchRoomPage() {
     isDeafened,
     activeSpeakers,
     micPermission,
+    connectionState,
     toggleMute,
     toggleDeafen,
     startScreenShare,
@@ -157,13 +158,13 @@ export default function WatchRoomPage() {
       supabase.removeChannel(partChannel);
       supabase.removeChannel(roomChannel);
     };
-  }, [roomId, user]);
+  }, [roomId, user, navigate]);
 
   useEffect(() => {
     if (room?.current_video_url && !tempUrl) {
       setTempUrl(room.current_video_url);
     }
-  }, [room?.current_video_url]);
+  }, [room?.current_video_url, tempUrl]);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -257,10 +258,6 @@ export default function WatchRoomPage() {
           ref={el => {
             if (!el) return;
             if (el.srcObject !== stream) el.srcObject = stream;
-            // Attempt to force speaker output on mobile
-            if (typeof (el as any).setSinkId === 'function') {
-               // setSinkId is not well supported on mobile yet, but we ensure basic properties
-            }
           }}
           autoPlay
           playsInline
@@ -270,17 +267,25 @@ export default function WatchRoomPage() {
         />
       ))}
 
-      {/* Mic denied banner */}
-      {micPermission === 'denied' && (
-        <div className="fixed top-16 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 bg-red-500/20 border border-red-500/40 text-red-300 text-xs px-4 py-2 rounded-full backdrop-blur-sm">
-          <MicOff className="w-3.5 h-3.5" />
-          Microphone access denied — voice chat disabled
+      {/* Connection status toast */}
+      {connectionState === 'connecting' && !activeScreenStream && (
+        <div className="fixed top-16 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 bg-neon-indigo/20 border border-neon-indigo/40 text-neon-indigo text-xs px-4 py-2 rounded-full backdrop-blur-sm">
+          <div className="w-2 h-2 rounded-full bg-neon-indigo animate-ping" />
+          Connecting to peer stream...
         </div>
       )}
-      {micPermission === 'unavailable' && (
-        <div className="fixed top-16 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 bg-yellow-500/20 border border-yellow-500/40 text-yellow-300 text-xs px-4 py-2 rounded-full backdrop-blur-sm">
+      {connectionState === 'failed' && (
+        <div className="fixed top-16 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 bg-red-500/20 border border-red-500/40 text-red-300 text-xs px-4 py-2 rounded-full backdrop-blur-sm">
+          <X className="w-3.5 h-3.5" />
+          Connection failed — Retrying...
+        </div>
+      )}
+
+      {/* Mic denied banner */}
+      {micPermission === 'denied' && (
+        <div className="fixed top-24 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 bg-red-500/20 border border-red-500/40 text-red-300 text-xs px-4 py-2 rounded-full backdrop-blur-sm">
           <MicOff className="w-3.5 h-3.5" />
-          No microphone found
+          Microphone access denied
         </div>
       )}
 
@@ -312,8 +317,8 @@ export default function WatchRoomPage() {
 
           <div className="flex items-center gap-2">
             <div className="hidden sm:flex items-center gap-2 glass !rounded-full px-3 py-1.5">
-              <span className="w-2 h-2 rounded-full bg-neon-green animate-pulse" />
-              <span className="text-xs text-white/50">Synced</span>
+              <span className={`w-2 h-2 rounded-full ${connectionState === 'connected' ? 'bg-neon-green' : 'bg-yellow-500'} animate-pulse`} />
+              <span className="text-xs text-white/50">{connectionState === 'connected' ? 'Synced' : 'Connecting...'}</span>
             </div>
 
             <button
@@ -348,7 +353,6 @@ export default function WatchRoomPage() {
                    ref={el => {
                      if (!el) return;
                      screenVideoRef.current = el;
-                     // Only assign srcObject when stream identity changes
                      if (el.srcObject !== activeScreenStream) {
                        el.srcObject = activeScreenStream;
                      }
@@ -361,7 +365,6 @@ export default function WatchRoomPage() {
                </div>
             ) : room?.current_video_url ? (
                <div className="absolute inset-0">
-                 {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
                  <ReactPlayer
                     ref={playerRef}
                     url={room.current_video_url}
@@ -374,13 +377,21 @@ export default function WatchRoomPage() {
                     onPause={handlePause}
                     controls={false}
                     style={{ pointerEvents: isHost ? 'auto' : 'none' }}
-                    {...({} as any)}
                  />
                </div>
             ) : (
                <div className="text-white/50 flex flex-col items-center">
-                  <Play className="w-16 h-16 mb-4 opacity-20" />
-                  <p>Waiting for host to select a video...</p>
+                  {connectionState === 'connecting' ? (
+                    <div className="flex flex-col items-center gap-4">
+                      <div className="w-12 h-12 border-4 border-neon-indigo/20 border-t-neon-indigo rounded-full animate-spin" />
+                      <p>Establishing peer connection...</p>
+                    </div>
+                  ) : (
+                    <>
+                      <Play className="w-16 h-16 mb-4 opacity-20" />
+                      <p>Waiting for host to select a video...</p>
+                    </>
+                  )}
                </div>
             )}
 
